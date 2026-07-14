@@ -45,12 +45,22 @@ class MarkdownTocUpdateCommand(sublime_plugin.TextCommand):
         content = source_view.substr(sublime.Region(0, source_view.size()))
         matches = self._extract_headings(content)
 
-        # Updated UI Layout
-        toc_text = "MARKDOWN NAVIGATION\n"
-        toc_text += f"Active: {display_name}\n"  # Line index 1
-        toc_text += "[Refresh]\n"     # Line index 2 (The "Button")
-        toc_text += ("=" * 30) + "\n\n"
-        
+        # UI layout: build the fixed header block as a list of lines so the row
+        # of the [Refresh] button and the start row of the headings are derived
+        # from the layout instead of hardcoded. The listener reads these back.
+        refresh_label = "[Refresh]"
+        header_lines = [
+            "MARKDOWN NAVIGATION",
+            f"Active: {display_name}",
+            refresh_label,
+            "=" * 30,
+            "",  # blank separator before the headings
+        ]
+        refresh_row = header_lines.index(refresh_label)
+        header_start_row = len(header_lines)
+
+        toc_text = "\n".join(header_lines) + "\n"
+
         regions = []
         for level, title, pos in matches:
             indent = "  " * (len(level) - 1)
@@ -60,9 +70,11 @@ class MarkdownTocUpdateCommand(sublime_plugin.TextCommand):
         self.view.set_read_only(False)
         self.view.replace(edit, sublime.Region(0, self.view.size()), toc_text)
         self.view.set_read_only(True)
-        
+
         self.view.settings().set("toc_source_id", source_view_id)
         self.view.settings().set("header_positions", regions)
+        self.view.settings().set("toc_refresh_row", refresh_row)
+        self.view.settings().set("toc_header_start_row", header_start_row)
 
     @staticmethod
     def _extract_headings(content):
@@ -117,19 +129,25 @@ class MarkdownTocListener(sublime_plugin.ViewEventListener):
             return
         line_row, _ = self.view.rowcol(sel[0].begin())
 
-        # 1. Handle "Refresh" Click (Line index 2 / Row 3)
-        if line_row == 2:
-            source_view_id = self.view.settings().get("toc_source_id")
+        settings = self.view.settings()
+        refresh_row = settings.get("toc_refresh_row")
+        header_start_row = settings.get("toc_header_start_row")
+        if refresh_row is None or header_start_row is None:
+            return
+
+        # 1. Handle "Refresh" click.
+        if line_row == refresh_row:
+            source_view_id = settings.get("toc_source_id")
             if source_view_id:
                 self.view.run_command("markdown_toc_update", {"source_view_id": source_view_id})
             return
 
-        # 2. Handle Header Jumps (Headers now start at line index 5 / Row 6)
-        header_index = line_row - 5
-        positions = self.view.settings().get("header_positions", [])
+        # 2. Handle header jumps.
+        header_index = line_row - header_start_row
+        positions = settings.get("header_positions", [])
 
         if 0 <= header_index < len(positions):
-            source_view = sublime.View(self.view.settings().get("toc_source_id"))
+            source_view = sublime.View(settings.get("toc_source_id"))
             source_window = source_view.window() if source_view.is_valid() else None
             if source_window:
                 target_pos = positions[header_index]
