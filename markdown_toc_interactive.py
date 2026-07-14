@@ -43,8 +43,8 @@ class MarkdownTocUpdateCommand(sublime_plugin.TextCommand):
         display_name = os.path.basename(file_path) if file_path else "Untitled"
 
         content = source_view.substr(sublime.Region(0, source_view.size()))
-        matches = [(m.group(1), m.group(2), m.start()) for m in re.finditer(r'^(#+)\s+(.*)', content, re.MULTILINE)]
-        
+        matches = self._extract_headings(content)
+
         # Updated UI Layout
         toc_text = "MARKDOWN NAVIGATION\n"
         toc_text += f"Active: {display_name}\n"  # Line index 1
@@ -63,6 +63,26 @@ class MarkdownTocUpdateCommand(sublime_plugin.TextCommand):
         
         self.view.settings().set("toc_source_id", source_view_id)
         self.view.settings().set("header_positions", regions)
+
+    @staticmethod
+    def _extract_headings(content):
+        """Return (level, title, char_offset) for each ATX heading, skipping
+        anything inside fenced code blocks so code comments aren't treated as
+        headings."""
+        heading_re = re.compile(r'^(#+)\s+(.*)')
+        fence_re = re.compile(r'^\s*(```|~~~)')
+        matches = []
+        offset = 0
+        in_fence = False
+        for line in content.splitlines(keepends=True):
+            if fence_re.match(line):
+                in_fence = not in_fence
+            elif not in_fence:
+                m = heading_re.match(line)
+                if m:
+                    matches.append((m.group(1), m.group(2).rstrip(), offset))
+            offset += len(line)
+        return matches
 
 class MarkdownTocListener(sublime_plugin.ViewEventListener):
     def on_activated_async(self):
@@ -83,10 +103,20 @@ class MarkdownTocListener(sublime_plugin.ViewEventListener):
     def on_selection_modified(self):
         if self.view.name() != "Navigation":
             return
-        
-        sel = self.view.sel()[0]
-        line_row, _ = self.view.rowcol(sel.begin())
-        
+
+        # Only react to genuine user interaction with the panel. When the TOC is
+        # rebuilt programmatically the cursor moves too, but the panel is not the
+        # active view; acting on that would steal focus and can create a
+        # focus/refresh feedback loop.
+        window = self.view.window()
+        if not window or window.active_view() != self.view:
+            return
+
+        sel = self.view.sel()
+        if len(sel) == 0:
+            return
+        line_row, _ = self.view.rowcol(sel[0].begin())
+
         # 1. Handle "Refresh" Click (Line index 2 / Row 3)
         if line_row == 2:
             source_view_id = self.view.settings().get("toc_source_id")
@@ -97,12 +127,13 @@ class MarkdownTocListener(sublime_plugin.ViewEventListener):
         # 2. Handle Header Jumps (Headers now start at line index 5 / Row 6)
         header_index = line_row - 5
         positions = self.view.settings().get("header_positions", [])
-        
+
         if 0 <= header_index < len(positions):
             source_view = sublime.View(self.view.settings().get("toc_source_id"))
-            if source_view.is_valid():
+            source_window = source_view.window() if source_view.is_valid() else None
+            if source_window:
                 target_pos = positions[header_index]
-                source_view.window().focus_view(source_view)
+                source_window.focus_view(source_view)
                 source_view.sel().clear()
                 source_view.sel().add(sublime.Region(target_pos, target_pos))
                 source_view.show_at_center(target_pos)
@@ -121,6 +152,8 @@ class CloseMarkdownTocCommand(sublime_plugin.WindowCommand):
 class OpenMarkdownTocCommand(sublime_plugin.TextCommand):
     def run(self, edit):
         window = self.view.window()
+        if not window:
+            return
         toc_view = next((v for v in window.views() if v.name() == "Navigation"), None)
         
         if toc_view:
