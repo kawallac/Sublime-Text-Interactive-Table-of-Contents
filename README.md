@@ -16,6 +16,9 @@ This plugin for Sublime Text is an interactive table of contents for markdown fi
 - Click [Refresh] to refresh the ToC, also saving the file and switching tabs and back will refresh
 
 # Changelog
+- 26-07-14 v1.2 : Fixed a plugin-host crash (SIGABRT / stack overflow) triggered by clicking [Refresh].
+    Hardened against edge-case errors (empty selection, closed source view). Headings inside fenced
+    code blocks are no longer treated as ToC entries.
 - 26-02-10 v1.1 : Converted [Close] to [Refresh], use the keyboard shortcut to close the plugin 
 - 26-02-06 v1.0 : Initial creation; reads the .md file headings and generates a ToC. 
     Switch between .md tabs and the ToC automatically updates to active tab.
